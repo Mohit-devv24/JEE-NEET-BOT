@@ -1,0 +1,17 @@
+downloaded_files/
+.venv/
+__pycache__/
+*.tmp
+*.pyc
+.DS_Store
+cookies.txt
+folder_page.html
+mobile.html
+test_file.pdf
+download_progress.json
+download_progress_v2.json
+token.json
+client_secret.json
+*.log
+telegram_file_cache.json
+users_db.json
