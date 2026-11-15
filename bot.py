@@ -1,4 +1,15 @@
 import os
+import sys
+import socket
+
+# Force IPv4 on macOS to eliminate 15-30s IPv6 DNS timeouts
+_orig_getaddrinfo = socket.getaddrinfo
+def _ipv4_getaddrinfo(*args, **kwargs):
+    responses = _orig_getaddrinfo(*args, **kwargs)
+    ipv4_res = [r for r in responses if r[0] == socket.AF_INET]
+    return ipv4_res if ipv4_res else responses
+socket.getaddrinfo = _ipv4_getaddrinfo
+
 import json
 import re
 import math
@@ -996,7 +1007,7 @@ def send_file_to_user(chat_id, user_id, file_id):
             bot.send_document(
                 chat_id,
                 tg_cache[file_id],
-                caption=f"📘 <b>{name}</b>\n\n{quota_caption}\n⚡ <i>Instant Cloud Delivery</i>\n✨ <i>Provided by JEE NEET Books (@{BOT_USERNAME})</i>",
+                caption=f"📘 <b>{name}</b>",
                 parse_mode="HTML"
             )
             return
@@ -1010,13 +1021,13 @@ def send_file_to_user(chat_id, user_id, file_id):
         file_size_mb = os.path.getsize(local_path) / (1024 * 1024)
         if file_size_mb <= 49.5:
             bot.send_chat_action(chat_id, "upload_document")
-            msg = bot.send_message(chat_id, f"⏳ <b>Uploading {name}...</b> ({file_size_mb:.1f} MB)\n<i>(First-time upload takes ~15-25s, future downloads are instant!)</i>")
+            msg = bot.send_message(chat_id, f"⚡ <b>Sending {name}...</b>")
             try:
                 with open(local_path, "rb") as doc:
                     sent_msg = bot.send_document(
                         chat_id,
                         doc,
-                        caption=f"📘 <b>{name}</b>\n\n{quota_caption}\n✨ <i>Provided by JEE NEET Books (@{BOT_USERNAME})</i>",
+                        caption=f"📘 <b>{name}</b>",
                         parse_mode="HTML",
                         timeout=300
                     )
@@ -1038,25 +1049,23 @@ def send_file_to_user(chat_id, user_id, file_id):
     drive_link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
     direct_link = f"https://drive.google.com/uc?id={file_id}&export=download"
 
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("🌐 Open in Google Drive", url=drive_link),
-        types.InlineKeyboardButton("⬇️ Direct Download Link", url=direct_link)
-    )
-    markup.add(types.InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu"))
-
-    size_text = ""
-    if target.get("size"):
+    size_str = ""
+    if local_path and os.path.exists(local_path):
+        size_mb = os.path.getsize(local_path) / (1024 * 1024)
+        size_str = f" ({size_mb:.1f} MB)"
+    elif target.get("size"):
         size_mb = target["size"] / (1024 * 1024)
-        size_text = f"• <b>Size:</b> {size_mb:.1f} MB\n"
+        size_str = f" ({size_mb:.1f} MB)"
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        types.InlineKeyboardButton("⬇️ Direct Download PDF", url=direct_link),
+        types.InlineKeyboardButton("🌐 Open in Google Drive", url=drive_link)
+    )
 
     bot.send_message(
         chat_id,
-        f"📘 <b>{name}</b>\n\n"
-        f"{size_text}"
-        f"• <b>Location:</b> <code>{clean_name(target['path'])}</code>\n\n"
-        f"{quota_caption}\n\n"
-        f"👇 Click below to download directly:",
+        f"📘 <b>{name}</b>{size_str}",
         reply_markup=markup
     )
 
@@ -1107,6 +1116,19 @@ def search_files(query):
         if all(token in name_lower or token in path_lower for token in q_tokens):
             matches.append(f)
     return matches
+
+@bot.channel_post_handler(func=lambda message: True)
+def handle_channel_post(message):
+    print(f"🔥 CHANNEL POST DETECTED! Chat ID: {message.chat.id}, Title: {getattr(message.chat, 'title', 'Channel')}")
+    try:
+        bot.send_message(message.chat.id, f"✅ Storage Dump Connected! Channel ID: <code>{message.chat.id}</code>")
+    except Exception as e:
+        print("Failed to reply in channel:", e)
+
+@bot.message_handler(func=lambda message: getattr(message, 'forward_from_chat', None) is not None)
+def handle_forwarded_post(message):
+    chat = message.forward_from_chat
+    bot.reply_to(message, f"📌 <b>Detected Channel:</b> {chat.title}\n🆔 <b>Channel ID:</b> <code>{chat.id}</code>\n\n✅ Dump storage ID saved!")
 
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'document', 'video', 'audio', 'voice', 'forward'])
 def handle_incoming_messages(message):
