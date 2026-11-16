@@ -13,6 +13,5 @@ download_progress_v2.json
 token.json
 client_secret.json
 *.log
-users_db.json
 *.session
 rclone.conf

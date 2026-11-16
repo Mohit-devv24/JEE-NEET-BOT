@@ -99,30 +99,55 @@ def notify_admins(text, markup=None):
         except Exception as e:
             print(f"Failed to alert admin {admin_id}:", e)
 
+@bot.chat_join_request_handler()
+def handle_chat_join_request(req):
+    """Automatically approve channel join requests so users become permanent members!"""
+    try:
+        bot.approve_chat_join_request(req.chat.id, req.from_user.id)
+        uid_str = str(req.from_user.id)
+        if uid_str in users_data:
+            users_data[uid_str]["req_sent"] = True
+            users_data[uid_str]["is_verified"] = True
+            save_users()
+    except Exception as e:
+        print("Join request auto-approval error:", e)
+
 def is_user_subscribed(user_id):
     if int(user_id) in ADMIN_IDS:
         return True
     
     uid_str = str(user_id)
+    u_info = users_data.get(uid_str, {})
     
-    # 1. Must be member in Discussion Group
+    # If already verified or unlimited, NEVER ask again!
+    if u_info.get("is_verified", False) or u_info.get("req_sent", False) or u_info.get("is_unlimited", False):
+        return True
+    
+    # 1. Check Discussion Group membership
+    is_in_group = False
     try:
         m = bot.get_chat_member('@jee_neet_discussion_student', user_id)
-        if m.status in ['left', 'kicked']:
-            return False
+        if m.status in ['creator', 'administrator', 'member', 'restricted']:
+            is_in_group = True
     except Exception:
-        return False
+        # Don't lock out if API error
+        is_in_group = True
 
-    # 2. Channel: only join request is required!
-    if users_data.get(uid_str, {}).get("req_sent", False):
-        return True
-
+    # 2. Check Channel membership
+    is_in_channel = False
     try:
         m_ch = bot.get_chat_member('-1004417334756', user_id)
         if m_ch.status in ['creator', 'administrator', 'member', 'restricted']:
-            return True
+            is_in_channel = True
     except Exception:
         pass
+
+    if is_in_group and is_in_channel:
+        if uid_str in users_data:
+            users_data[uid_str]["is_verified"] = True
+            users_data[uid_str]["req_sent"] = True
+            save_users()
+        return True
 
     return False
 
@@ -723,10 +748,17 @@ def handle_callbacks(call):
             )
             return
 
-        # Mark Channel Join Request as sent/accepted
+        # Auto-approve channel join request if pending
+        try:
+            bot.approve_chat_join_request("-1004417334756", user_id)
+        except Exception:
+            pass
+
+        # Mark Channel Join Request and permanent verification
         uid_str = str(user_id)
         if uid_str in users_data:
             users_data[uid_str]["req_sent"] = True
+            users_data[uid_str]["is_verified"] = True
             save_users()
 
         bot.answer_callback_query(call.id, "🎉 Verified! Access Granted!", show_alert=False)
