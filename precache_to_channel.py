@@ -99,6 +99,7 @@ def main():
     total = len(to_cache)
     print(f"Found {total} remaining books to upload into channel (sorted smallest to largest)...\n", flush=True)
 
+    uploaded_since_push = 0
     for idx, (f_info, local_path, sz_mb) in enumerate(to_cache, 1):
         fid = f_info["id"]
         name = clean_name(f_info["name"])
@@ -109,6 +110,7 @@ def main():
             if doc_fid:
                 tg_cache[fid] = doc_fid
                 success = True
+                uploaded_since_push += 1
                 print(f"[{idx}/{total}] [CACHED ⚡ 0.1s] {name} ({sz_mb:.2f} MB)", flush=True)
                 
                 try:
@@ -116,6 +118,18 @@ def main():
                         json.dump(tg_cache, cf, indent=2)
                 except Exception as e:
                     print("Error saving cache:", e)
+
+                # Auto-sync to Render cloud every 20 files
+                if uploaded_since_push >= 20:
+                    try:
+                        print("🚀 Auto-syncing cache to Render cloud...", flush=True)
+                        subprocess.run(["git", "add", TG_CACHE_PATH], cwd=BASE_DIR, check=False)
+                        subprocess.run(["git", "commit", "-m", f"Auto-sync cache: {len(tg_cache)} books"], cwd=BASE_DIR, check=False)
+                        subprocess.run(["git", "push", "origin", "main"], cwd=BASE_DIR, check=False)
+                        uploaded_since_push = 0
+                        print("✅ Synced with Render cloud!", flush=True)
+                    except Exception as ge:
+                        print("Git push error:", ge)
 
                 time.sleep(2)
                 break
@@ -125,6 +139,14 @@ def main():
 
         if not success:
             print(f"[SKIP] Failed to upload {name} ({sz_mb:.1f} MB)")
+
+    # Final push
+    try:
+        subprocess.run(["git", "add", TG_CACHE_PATH], cwd=BASE_DIR, check=False)
+        subprocess.run(["git", "commit", "-m", f"Final cache sync: {len(tg_cache)} books"], cwd=BASE_DIR, check=False)
+        subprocess.run(["git", "push", "origin", "main"], cwd=BASE_DIR, check=False)
+    except Exception:
+        pass
 
     print("\nPre-caching run completed! Total cached:", len(tg_cache))
 
