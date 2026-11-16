@@ -23,6 +23,7 @@ apihelper.CONNECT_TIMEOUT = 30
 apihelper.CUSTOM_REQUEST_TIMEOUT = (30, 300)
 
 TOKEN = os.environ.get("BOT_TOKEN", "8996284156:AAEl6oYSxqszHXUP-yS7FKBTYq5g3tKLLIo")
+CHANNEL_STORAGE_ID = -1004467297667
 bot = telebot.TeleBot(TOKEN, parse_mode="HTML")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -928,7 +929,7 @@ def show_file_list_page(message, file_list, title, page=0, callback_prefix=""):
         if len(name) > 38:
             name = name[:35] + "..."
         local = find_local_file(f)
-        icon = "⚡" if local else "📄"
+        icon = "⚡" if (f["id"] in tg_cache or local) else "📄"
         markup.add(types.InlineKeyboardButton(f"{icon} {name}", callback_data=f"file:{f['id']}"))
 
     nav_buttons = []
@@ -1003,18 +1004,27 @@ def send_file_to_user(chat_id, user_id, file_id):
 
     # 1. Instant delivery via Telegram Cloud Cache
     if file_id in tg_cache:
-        try:
-            bot.send_document(
-                chat_id,
-                tg_cache[file_id],
-                caption=f"📘 <b>{name}</b>",
-                parse_mode="HTML"
-            )
-            return
-        except Exception as e:
-            print(f"Cached file_id invalid for {name}: {e}")
-            tg_cache.pop(file_id, None)
-            save_tg_cache()
+        val = tg_cache[file_id]
+        if isinstance(val, int) or (isinstance(val, dict) and "msg_id" in val):
+            m_id = val["msg_id"] if isinstance(val, dict) else val
+            try:
+                bot.copy_message(chat_id, CHANNEL_STORAGE_ID, m_id)
+                return
+            except Exception as e:
+                print(f"Failed to copy message {m_id} for {name}: {e}")
+        elif isinstance(val, str):
+            try:
+                bot.send_document(
+                    chat_id,
+                    val,
+                    caption=f"📘 <b>{name}</b>",
+                    parse_mode="HTML"
+                )
+                return
+            except Exception as e:
+                print(f"Cached file_id invalid for {name}: {e}")
+                tg_cache.pop(file_id, None)
+                save_tg_cache()
 
     # 2. Local File Upload
     if local_path:
