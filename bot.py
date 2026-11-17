@@ -42,9 +42,9 @@ ADMIN_IDS = [8371163996, 5893196884]  # Owner & Admin IDs
 # Required Channels for Force Subscription
 REQUIRED_CHANNELS = [
     {
-        "id": "-1004417334756",
-        "name": "IIT JEE NEET MATERIAL",
-        "link": "https://t.me/+iJmYmHYEqgk0ODAx"
+        "id": "-1004467297667",
+        "name": "Books Material",
+        "link": "https://t.me/+Aj-T8ScqftVlMTcx"
     },
     {
         "id": "@jee_neet_discussion_student",
@@ -225,7 +225,7 @@ def show_force_sub_screen(chat_id, user_id, message_id=None):
 
     markup = types.InlineKeyboardMarkup(row_width=1)
     markup.add(
-        types.InlineKeyboardButton("📢 1. Request to Join Channel", url="https://t.me/+iJmYmHYEqgk0ODAx"),
+        types.InlineKeyboardButton("📢 1. Request to Join Channel", url="https://t.me/+Aj-T8ScqftVlMTcx"),
         types.InlineKeyboardButton("💬 2. Join Discussion Group", url="https://t.me/jee_neet_discussion_student"),
         types.InlineKeyboardButton("🔄 Verify My Access", callback_data="verify_subscription")
     )
