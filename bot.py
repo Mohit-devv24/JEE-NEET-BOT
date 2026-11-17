@@ -85,10 +85,77 @@ if os.path.exists(USERS_DB_PATH):
     except Exception:
         users_data = {}
 
+last_db_backup_time = 0
+last_pinned_backup_id = None
+backup_lock = threading.Lock()
+
+def load_cloud_db():
+    """Load persistent users database from Telegram Cloud Storage Channel."""
+    global users_data, last_pinned_backup_id
+    try:
+        chat = bot.get_chat(CHANNEL_STORAGE_ID)
+        pinned = chat.pinned_message
+        if pinned and pinned.document and pinned.caption and '#DB_PERSISTENCE_MASTER' in pinned.caption:
+            last_pinned_backup_id = pinned.message_id
+            file_info = bot.get_file(pinned.document.file_id)
+            content = bot.download_file(file_info.file_path)
+            cloud_users = json.loads(content.decode('utf-8'))
+            if isinstance(cloud_users, dict):
+                # Merge cloud data with any local data
+                for uid, udata in cloud_users.items():
+                    if uid not in users_data or udata.get("downloads_count", 0) > users_data[uid].get("downloads_count", 0):
+                        users_data[uid] = udata
+                print(f"✅ Loaded {len(users_data)} users from Telegram Cloud Master DB!", flush=True)
+                with open(USERS_DB_PATH, "w", encoding="utf-8") as f:
+                    json.dump(users_data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print("Cloud DB load error (falling back to local):", e, flush=True)
+
+def backup_db_to_cloud():
+    """Backup users database to Telegram Cloud and pin it as master persistence."""
+    global last_db_backup_time, last_pinned_backup_id
+    with backup_lock:
+        now = time.time()
+        # Debounce: avoid uploading more than once every 15 seconds
+        if now - last_db_backup_time < 15:
+            return
+        last_db_backup_time = now
+
+        try:
+            temp_db_path = f"/tmp/users_db_cloud_{int(now)}.json"
+            with open(temp_db_path, "w", encoding="utf-8") as f:
+                json.dump(users_data, f, indent=2, ensure_ascii=False)
+
+            with open(temp_db_path, "rb") as f:
+                doc_msg = bot.send_document(
+                    CHANNEL_STORAGE_ID,
+                    f,
+                    caption=f"#DB_PERSISTENCE_MASTER | Users: {len(users_data)} | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+
+            if doc_msg and doc_msg.message_id:
+                old_id = last_pinned_backup_id
+                bot.pin_chat_message(CHANNEL_STORAGE_ID, doc_msg.message_id)
+                last_pinned_backup_id = doc_msg.message_id
+                if old_id and old_id != doc_msg.message_id:
+                    try:
+                        bot.delete_message(CHANNEL_STORAGE_ID, old_id)
+                    except Exception:
+                        pass
+
+            if os.path.exists(temp_db_path):
+                os.remove(temp_db_path)
+        except Exception as e:
+            print("Failed to backup DB to Telegram Cloud:", e, flush=True)
+
+# Initial load from cloud DB
+load_cloud_db()
+
 def save_users():
     try:
         with open(USERS_DB_PATH, "w", encoding="utf-8") as f:
             json.dump(users_data, f, indent=2, ensure_ascii=False)
+        threading.Thread(target=backup_db_to_cloud, daemon=True).start()
     except Exception as e:
         print("Error saving users db:", e)
 
@@ -252,16 +319,18 @@ def get_or_create_user(user_id, first_name="", username="", referrer_id=None):
 
     return users_data[uid_str], is_new
 
+admin_student_mode = {}  # admin_id -> True/False
+
 def can_user_download(user_id):
     uid_str = str(user_id)
-    if int(user_id) in ADMIN_IDS:
+    if int(user_id) in ADMIN_IDS and not admin_student_mode.get(int(user_id), False):
         return True, users_data.get(uid_str, {})
     
     user = users_data.get(uid_str)
     if not user:
         user, _ = get_or_create_user(user_id)
 
-    if user.get("is_unlimited", False):
+    if user.get("is_unlimited", False) and not admin_student_mode.get(int(user_id), False):
         return True, user
     
     downloads = user.get("downloads_count", 0)
@@ -399,6 +468,26 @@ def prompt_broadcast(chat_id):
         reply_markup=markup
     )
 
+@bot.message_handler(commands=['studentmode'])
+def handle_student_mode(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    admin_id = message.from_user.id
+    current = admin_student_mode.get(admin_id, False)
+    admin_student_mode[admin_id] = not current
+    mode_str = "ON 👨‍🎓 (Student Limit 4 books active)" if admin_student_mode[admin_id] else "OFF 🛡️ (Admin Unlimited Active)"
+    bot.send_message(message.chat.id, f"🛠️ <b>Student Test Mode:</b> {mode_str}\n\nType /start to see student main menu, or /resetlimit to reset your quota to 0/4.")
+
+@bot.message_handler(commands=['resetlimit'])
+def handle_reset_limit(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    uid_str = str(message.from_user.id)
+    if uid_str in users_data:
+        users_data[uid_str]["downloads_count"] = 0
+        save_users()
+    bot.send_message(message.chat.id, "🔄 <b>Your download limit has been reset to 0/4!</b>")
+
 @bot.message_handler(commands=['cancel'])
 def handle_cancel(message):
     chat_id = message.chat.id
@@ -526,7 +615,13 @@ def show_main_menu(chat_id, user_id, first_name="Aspirant", message_id=None):
     user, _ = get_or_create_user(user_id)
     downloads_used = user.get("downloads_count", 0)
     free_left = max(0, FREE_DOWNLOADS_LIMIT - downloads_used)
-    status_str = "🌟 <b>VIP Unlimited</b>" if user.get("is_unlimited") else f"🎁 <b>{free_left}/{FREE_DOWNLOADS_LIMIT} Free Downloads Left</b>"
+    is_unlimited_active = user.get("is_unlimited") and not admin_student_mode.get(int(user_id), False)
+    if is_unlimited_active:
+        status_str = "🌟 <b>VIP Unlimited</b>"
+    elif free_left == 0:
+        status_str = "🔒 <b>0/4 Free Quota (Locked - Refer 3 Friends or VIP)</b>"
+    else:
+        status_str = f"🎁 <b>{free_left}/{FREE_DOWNLOADS_LIMIT} Free Downloads Left</b>"
 
     welcome_text = (
         f"👋 <b>Welcome {first_name} to JEE NEET Books! 📚</b>\n\n"
@@ -1011,7 +1106,8 @@ def send_file_to_user(chat_id, user_id, file_id):
     name = clean_name(target["name"])
     local_path = find_local_file(target)
 
-    if not user.get("is_unlimited", False):
+    is_unlimited_active = user.get("is_unlimited", False) and not admin_student_mode.get(int(user_id), False)
+    if not is_unlimited_active:
         user["downloads_count"] = user.get("downloads_count", 0) + 1
         save_users()
         remaining = max(0, FREE_DOWNLOADS_LIMIT - user["downloads_count"])
