@@ -7,8 +7,16 @@ import random
 import asyncio
 import subprocess
 from telethon import TelegramClient
+from telethon.sessions import MemorySession
 from telethon.tl.types import InputFileBig, InputFile
 from telethon.tl.functions.upload import SaveBigFilePartRequest, SaveFilePartRequest
+
+# Neutralize Telethon's internal update loop to prevent buggy update differences and unwanted disconnects
+async def _dummy_update_loop(self):
+    while self.is_connected():
+        await asyncio.sleep(60)
+
+TelegramClient._update_loop = _dummy_update_loop
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MANIFEST_PATH = os.path.join(BASE_DIR, "files_manifest.json")
@@ -69,7 +77,7 @@ async def ensure_connected(client):
                 await client.start(bot_token=TOKEN)
             return True
         except Exception:
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
     return True
 
 async def fast_upload_stream(client, file_path, concurrency=16):
@@ -78,12 +86,19 @@ async def fast_upload_stream(client, file_path, concurrency=16):
     part_count = math.ceil(file_size / part_size)
     is_big = file_size > 10 * 1024 * 1024
     file_id = random.getrandbits(63)
+    file_name = os.path.basename(file_path)
 
     queue = asyncio.Queue(maxsize=concurrency * 2)
+    done_counter = [0]
+    counter_lock = asyncio.Lock()
+    upload_error = [None]
+    t_start = time.time()
 
     async def reader():
         with open(file_path, "rb") as f:
             for part_index in range(part_count):
+                if upload_error[0]:
+                    break
                 data = f.read(part_size)
                 await queue.put((part_index, data))
         for _ in range(concurrency):
@@ -96,21 +111,38 @@ async def fast_upload_stream(client, file_path, concurrency=16):
                 queue.task_done()
                 break
             part_index, data = item
-            for attempt in range(5):
-                try:
-                    if not client.is_connected():
-                        await ensure_connected(client)
-                    if is_big:
-                        req = SaveBigFilePartRequest(file_id, part_index, part_count, data)
-                    else:
-                        req = SaveFilePartRequest(file_id, part_index, data)
-                    await client(req)
-                    break
-                except Exception as e:
-                    if attempt == 4:
-                        raise e
-                    await asyncio.sleep(1 + attempt)
-            queue.task_done()
+            success = False
+            try:
+                for attempt in range(8):
+                    try:
+                        if not client.is_connected():
+                            await ensure_connected(client)
+                        if is_big:
+                            req = SaveBigFilePartRequest(file_id, part_index, part_count, data)
+                        else:
+                            req = SaveFilePartRequest(file_id, part_index, data)
+                        await asyncio.wait_for(client(req), timeout=30)
+                        success = True
+                        break
+                    except Exception as pe:
+                        if attempt >= 7:
+                            upload_error[0] = pe
+                            print(f"\n⚠️ Part {part_index} failed: {pe}", flush=True)
+                        await asyncio.sleep(1 + attempt)
+
+                if success:
+                    async with counter_lock:
+                        done_counter[0] += 1
+                        d = done_counter[0]
+                        if d % 15 == 0 or d == part_count:
+                            elapsed = time.time() - t_start
+                            mb_done = (d * part_size) / (1024 * 1024)
+                            sz_mb = file_size / (1024 * 1024)
+                            pct = (d / part_count) * 100
+                            cur_speed = mb_done / elapsed if elapsed > 0 else 0
+                            print(f"  ⚡ {file_name[:24]}... [{d}/{part_count}] ({pct:.0f}%) -> {mb_done:.1f}/{sz_mb:.1f} MB @ {cur_speed:.2f} MB/s", flush=True)
+            finally:
+                queue.task_done()
 
     reader_task = asyncio.create_task(reader())
     uploader_tasks = [asyncio.create_task(uploader()) for _ in range(concurrency)]
@@ -118,6 +150,9 @@ async def fast_upload_stream(client, file_path, concurrency=16):
     await reader_task
     await queue.join()
     await asyncio.gather(*uploader_tasks)
+
+    if upload_error[0]:
+        raise upload_error[0]
 
     name = os.path.basename(file_path)
     if is_big:
@@ -141,7 +176,7 @@ async def main():
 
     uncached = [f for f in manifest if f["id"] not in tg_cache]
     print("=" * 55, flush=True)
-    print(f"  StudyMate BOOSTED Turbo Uploader (Stream 16x) ", flush=True)
+    print(f"  StudyMate BOOSTED Turbo Uploader (MemorySession 16x) ", flush=True)
     print("=" * 55, flush=True)
     print(f"Total manifest files: {len(manifest)}", flush=True)
     print(f"Already cached: {len(tg_cache)}", flush=True)
@@ -164,10 +199,9 @@ async def main():
     items_to_upload.sort(key=lambda x: x[2])
     print(f"Queue prepared: {len(items_to_upload)} files ready to boost!", flush=True)
 
-    session_name = "telethon_boost_single"
-    client = TelegramClient(session_name, API_ID, API_HASH, receive_updates=False)
+    client = TelegramClient(MemorySession(), API_ID, API_HASH, receive_updates=False)
     await client.start(bot_token=TOKEN)
-    print("⚡ Dedicated Turbo MTProto client connected! No session collisions.", flush=True)
+    print("⚡ Dedicated Turbo MTProto client connected via MemorySession! Peak speed unlocked.", flush=True)
 
     uploaded_since_push = 0
     total_to_do = len(items_to_upload)
@@ -184,6 +218,8 @@ async def main():
             caption = f"📘 {name}"
         if len(caption) > 1000:
             caption = caption[:995] + "..."
+
+        print(f"\n▶️ Starting [{i}/{total_to_do}] {name} ({sz_mb:.1f} MB)...", flush=True)
 
         success = False
         for attempt in range(4):
@@ -203,18 +239,18 @@ async def main():
                         json.dump(tg_cache, cf, indent=2)
 
                     curr_cached = len(tg_cache)
-                    print(f"[{i}/{total_to_do}] [⚡ {dt:.1f}s ({speed_mbs:.2f} MB/s)] {name} ({sz_mb:.1f} MB) -> Msg ID: {msg.id} [Total Cached: {curr_cached}/1376]", flush=True)
+                    print(f"✅ [{i}/{total_to_do}] [⚡ {dt:.1f}s ({speed_mbs:.2f} MB/s)] {name} -> Msg ID: {msg.id} [Total Cached: {curr_cached}/1376]", flush=True)
 
-                    if uploaded_since_push >= 15 or curr_cached == len(manifest):
+                    if uploaded_since_push >= 5 or curr_cached == len(manifest):
                         sync_cache_to_git(curr_cached)
                         uploaded_since_push = 0
 
                     success = True
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.5)
                     break
             except Exception as e:
                 print(f"Attempt {attempt+1} failed for {name}: {e}", flush=True)
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
         if not success:
             print(f"❌ Failed to upload {name} after 4 attempts", flush=True)

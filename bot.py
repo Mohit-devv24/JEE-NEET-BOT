@@ -189,25 +189,8 @@ def handle_chat_join_request(req):
         print("Join request recording error:", e)
 
 def is_user_subscribed(user_id):
-    if int(user_id) in ADMIN_IDS:
-        return True
-    
-    uid_str = str(user_id)
-    u_info = users_data.get(uid_str, {})
-    
-    # If already verified in bot, permanently grant access without touching channel!
-    if u_info.get("is_verified", False) or u_info.get("req_sent", False) or u_info.get("is_unlimited", False):
-        return True
-    
-    # Check Discussion Group membership
-    try:
-        m = bot.get_chat_member('@jee_neet_discussion_student', user_id)
-        if m.status in ['left', 'kicked']:
-            return False
-    except Exception:
-        pass
-
-    return False
+    # Force join removed - all users have instant direct access!
+    return True
 
 def show_force_sub_screen(chat_id, user_id, message_id=None):
     text = (
@@ -564,15 +547,7 @@ def handle_start(message):
 
     # If direct file requested via inline search
     if direct_file_id:
-        if not is_user_subscribed(user_id):
-            show_force_sub_screen(message.chat.id, user_id)
-            return
         send_file_to_user(message.chat.id, user_id, direct_file_id)
-        return
-
-    # Check force channel subscription
-    if not is_user_subscribed(user_id):
-        show_force_sub_screen(message.chat.id, user_id)
         return
 
     show_main_menu(message.chat.id, user_id, first_name)
@@ -584,7 +559,7 @@ def get_main_reply_keyboard(user_id=None):
     b3 = types.KeyboardButton("🌟 Mix Crunch")
     b4 = types.KeyboardButton("🔍 Search Materials")
     b5 = types.KeyboardButton("🎁 Free Quota & Invite")
-    b6 = types.KeyboardButton("💳 Buy VIP (₹49)")
+    b6 = types.KeyboardButton("💳 Buy VIP (₹249)")
     b7 = types.KeyboardButton("📝 Request Material")
     b8 = types.KeyboardButton("👨‍💻 Student Support")
     b9 = types.KeyboardButton("📊 Bot Stats")
@@ -692,14 +667,14 @@ def show_quota_screen(chat_id, user_id, message_id=None):
             f"📊 <b>Unlock Progress:</b> [ {progress_bar} ]\n\n"
             f"⚡ <b>Want Lifetime Unlimited Access?</b>\n"
             f"Option 1: Invite <b>{needed} more friend(s)</b> (100% FREE)\n"
-            f"Option 2: Get Instant VIP Pass for only <b>₹49</b>!\n"
+            f"Option 2: Get Instant VIP Pass for only <b>₹249</b>!\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔗 <b>Your Personal Invite Link:</b>\n"
             f"<code>{invite_link}</code>"
         )
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("📲 Share with Friends on Telegram", url=share_url))
-        markup.add(types.InlineKeyboardButton("💳 Buy Instant VIP Pass (₹49)", callback_data="action:buy_vip"))
+        markup.add(types.InlineKeyboardButton("💳 Buy Instant VIP Pass (₹249)", callback_data="action:buy_vip"))
         markup.add(types.InlineKeyboardButton("🔄 Refresh Status", callback_data="action:quota"))
         markup.add(types.InlineKeyboardButton("🏠 Back to Main Menu", callback_data="main_menu"))
 
@@ -735,9 +710,9 @@ def show_vip_purchase_screen(chat_id, user_id, message_id=None):
         "💳 <b>INSTANT VIP LIFETIME UNLIMITED PASS</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Unlock <b>LIFETIME UNLIMITED ACCESS</b> to all 1,376+ Books, Notes, Coaching Modules & PYQs with zero referrals!\n\n"
-        "⚡ <b>One-Time Fee:</b> <b>₹49 Only</b> (Valid Forever)\n\n"
+        "⚡ <b>One-Time Fee:</b> <b>₹249 Only</b> (Valid Forever)\n\n"
         "📲 <b>How to Pay:</b>\n"
-        "1️⃣ Pay <b>₹49</b> via any UPI App (GPay / PhonePe / Paytm / BHIM) to:\n"
+        "1️⃣ Pay <b>₹249</b> via any UPI App (GPay / PhonePe / Paytm / BHIM) to:\n"
         "   👉 <code>goyal.com@fam</code> <i>(Tap to copy)</i>\n\n"
         "2️⃣ Take a screenshot of the successful payment.\n"
         "3️⃣ Tap <b>'Upload Payment Screenshot'</b> below and send your screenshot here!\n"
@@ -774,7 +749,7 @@ def handle_help(message):
         "4️⃣ <b>Request Material:</b> Use /request to ask for any study material not yet in our library.\n\n"
         "5️⃣ <b>Download Policy:</b>\n"
         "   • Every student gets <b>4 FREE demo downloads</b>.\n"
-        "   • Invite <b>3 friends</b> OR buy the <b>₹49 VIP Pass</b> for Lifetime Unlimited Access!"
+        "   • Invite <b>3 friends</b> OR buy the <b>₹249 VIP Pass</b> for Lifetime Unlimited Access!"
     )
     bot.send_message(message.chat.id, text)
 
@@ -845,12 +820,6 @@ def handle_callbacks(call):
         show_main_menu(chat_id, user_id, call.from_user.first_name, message_id=call.message.message_id)
         return
 
-    # Check subscription for all other actions
-    if not is_user_subscribed(user_id):
-        bot.answer_callback_query(call.id, "Please join required channels first.")
-        show_force_sub_screen(chat_id, user_id, message_id=call.message.message_id)
-        return
-
     # Admin actions
     if data.startswith("admin:"):
         if user_id not in ADMIN_IDS:
@@ -898,7 +867,7 @@ def handle_callbacks(call):
                 try:
                     bot.send_message(
                         int(target_uid),
-                        "🎉 <b>CONGRATULATIONS! YOUR ₹49 VIP PASS IS ACTIVATED!</b> 🔓\n\n"
+                        "🎉 <b>CONGRATULATIONS! YOUR ₹249 VIP PASS IS ACTIVATED!</b> 🔓\n\n"
                         "Your payment has been successfully verified by Admin!\n"
                         "🌟 You now have <b>Lifetime Unlimited Access</b> to all 1,376+ Books & Modules!\n\n"
                         "Happy Studying & Best of Luck for IIT-JEE / NEET! 🚀"
@@ -941,7 +910,7 @@ def handle_callbacks(call):
         markup.add(types.InlineKeyboardButton("❌ Cancel", callback_data="action:cancel_payment"))
         bot.send_message(
             chat_id,
-            "📸 <b>Send Payment Screenshot:</b>\n\nPlease upload the screenshot of your ₹49 UPI payment now.\n\n<i>(Type /cancel to abort)</i>",
+            "📸 <b>Send Payment Screenshot:</b>\n\nPlease upload the screenshot of your ₹249 UPI payment now.\n\n<i>(Type /cancel to abort)</i>",
             reply_markup=markup
         )
         bot.answer_callback_query(call.id)
@@ -1079,7 +1048,7 @@ def send_file_to_user(chat_id, user_id, file_id):
             "To unlock <b>LIFETIME UNLIMITED ACCESS</b> to all 1,376+ Books, Notes, Coaching Modules & PYQs:\n\n"
             f"👉 <b>Option 1:</b> Invite {REQUIRED_REFERRALS} friends (FREE)\n"
             f"   Progress: [ {progress_bar} ] ({referrals}/{REQUIRED_REFERRALS} Friends)\n\n"
-            f"👉 <b>Option 2:</b> Get Instant VIP Pass for only <b>₹49</b>!\n"
+            f"👉 <b>Option 2:</b> Get Instant VIP Pass for only <b>₹249</b>!\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔗 <b>Your Personal Invite Link:</b>\n"
             f"<code>{invite_link}</code>"
@@ -1087,7 +1056,7 @@ def send_file_to_user(chat_id, user_id, file_id):
 
         markup = types.InlineKeyboardMarkup(row_width=1)
         markup.add(types.InlineKeyboardButton("📲 Share with Friends on Telegram", url=share_url))
-        markup.add(types.InlineKeyboardButton("💳 Buy Instant VIP Pass (₹49)", callback_data="action:buy_vip"))
+        markup.add(types.InlineKeyboardButton("💳 Buy Instant VIP Pass (₹249)", callback_data="action:buy_vip"))
         markup.add(types.InlineKeyboardButton("🔄 Refresh / Check Status", callback_data="action:quota"))
         markup.add(types.InlineKeyboardButton("🏠 Back to Main Menu", callback_data="main_menu"))
 
@@ -1277,7 +1246,7 @@ def handle_incoming_messages(message):
         now_str = datetime.datetime.now().strftime("%d %b %Y, %I:%M %p")
         u_h = f"@{username}" if username else "No username"
         caption = (
-            "💰 <b>NEW VIP PAYMENT SUBMITTED (₹49)!</b>\n"
+            "💰 <b>NEW VIP PAYMENT SUBMITTED (₹249)!</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>Student:</b> {first_name} ({u_h})\n"
             f"🆔 <b>User ID:</b> <code>{user_id}</code>\n"
@@ -1324,11 +1293,6 @@ def handle_incoming_messages(message):
         notify_admins(alert_text)
         return
 
-    # Check force channel subscription for regular text messages
-    if not is_user_subscribed(user_id):
-        show_force_sub_screen(chat_id, user_id)
-        return
-
     # Normal user text search and Reply Keyboard actions
     if message.content_type == 'text':
         txt = message.text.strip()
@@ -1347,7 +1311,7 @@ def handle_incoming_messages(message):
         elif txt == "🎁 Free Quota & Invite":
             show_quota_screen(chat_id, user_id)
             return
-        elif txt == "💳 Buy VIP (₹49)":
+        elif txt in ["💳 Buy VIP (₹249)", "💳 Buy VIP (₹49)"]:
             show_vip_purchase_screen(chat_id, user_id)
             return
         elif txt == "📝 Request Material":
