@@ -1,6 +1,9 @@
 import os
 import sys
 import socket
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
 
 # Force IPv4 on macOS to eliminate 15-30s IPv6 DNS timeouts
 _orig_getaddrinfo = socket.getaddrinfo
@@ -1370,8 +1373,7 @@ def handle_chat_join_request(req):
         users_data[uid_str]["req_sent"] = True
         save_users()
 
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
